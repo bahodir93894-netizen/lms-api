@@ -1,10 +1,46 @@
 import { Router } from "express";
-import { convexQuery, convexMutation } from "../convex.js";
+import { z } from "zod";
 import { requireAuth } from "../middleware/auth.js";
+import { asyncHandler, successResponse, apiError } from "../utils/api-handler.js";
+import { convexQuery, convexMutation } from "../convex.js";
+
 const r = Router();
-r.get("/course/:courseId", async (req, res, next) => { try { res.json(await convexQuery("modules:listByCourse", { courseId: req.params.courseId })); } catch(e) { next(e); } });
-r.post("/", requireAuth, async (req, res, next) => { try { const { courseId, title } = req.body; const id = await convexMutation("modules:create", { courseId, title }, req.authToken); res.status(201).json({ _id: id }); } catch(e) { next(e); } });
-r.patch("/:id", requireAuth, async (req, res, next) => { try { await convexMutation("modules:update", { moduleId: req.params.id, ...req.body }, req.authToken); res.json({ success: true }); } catch(e) { next(e); } });
-r.delete("/:id", requireAuth, async (req, res, next) => { try { await convexMutation("modules:remove", { moduleId: req.params.id }, req.authToken); res.json({ success: true }); } catch(e) { next(e); } });
-r.post("/reorder", requireAuth, async (req, res, next) => { try { await convexMutation("modules:reorder", { moduleIds: req.body.moduleIds }, req.authToken); res.json({ success: true }); } catch(e) { next(e); } });
+
+const CreateModuleSchema = z.object({
+  courseId: z.string().min(1),
+  title: z.string().min(1).max(200),
+  description: z.string().optional().default(""),
+  order: z.number().int().min(0).optional(),
+});
+
+const UpdateModuleSchema = CreateModuleSchema.partial();
+
+r.get("/course/:courseId", asyncHandler(async (req, res) => {
+  const modules = await convexQuery("modules:listByCourse", { courseId: req.params.courseId });
+  successResponse(res, modules);
+}));
+
+r.get("/:id", asyncHandler(async (req, res) => {
+  const mod = await convexQuery("modules:get", { moduleId: req.params.id });
+  if (!mod) { apiError(res, 404, "NOT_FOUND", "Module not found"); return; }
+  successResponse(res, mod);
+}));
+
+r.post("/", requireAuth, asyncHandler(async (req, res) => {
+  const body = CreateModuleSchema.parse(req.body);
+  const id = await convexMutation("modules:create", body, req.authToken);
+  successResponse(res, { _id: id }, 201);
+}));
+
+r.patch("/:id", requireAuth, asyncHandler(async (req, res) => {
+  const body = UpdateModuleSchema.parse(req.body);
+  await convexMutation("modules:update", { moduleId: req.params.id, ...body }, req.authToken);
+  successResponse(res, { success: true });
+}));
+
+r.delete("/:id", requireAuth, asyncHandler(async (req, res) => {
+  await convexMutation("modules:remove", { moduleId: req.params.id }, req.authToken);
+  successResponse(res, { success: true });
+}));
+
 export default r;
