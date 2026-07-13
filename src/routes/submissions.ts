@@ -1,10 +1,42 @@
 import { Router } from "express";
-import { convexQuery, convexMutation } from "../convex.js";
+import { z } from "zod";
 import { requireAuth } from "../middleware/auth.js";
+import { asyncHandler, successResponse, apiError } from "../utils/api-handler.js";
+import { convexQuery, convexMutation } from "../convex.js";
+
 const r = Router();
-r.get("/assignment/:assignmentId", requireAuth, async (req, res, next) => { try { res.json(await convexQuery("submissions:listByAssignment", { assignmentId: req.params.assignmentId }, req.authToken)); } catch(e) { next(e); } });
-r.get("/mine/:assignmentId", async (req, res, next) => { try { res.json(await convexQuery("submissions:mySubmissions", { assignmentId: req.params.assignmentId }, req.authToken)); } catch(e) { next(e); } });
-r.post("/", requireAuth, async (req, res, next) => { try { const { assignmentId, textMd, fileStorageId } = req.body; const id = await convexMutation("submissions:submit", { assignmentId, textMd, fileStorageId }, req.authToken); res.status(201).json({ _id: id }); } catch(e) { next(e); } });
-r.post("/:id/grade", requireAuth, async (req, res, next) => { try { const { score, feedbackMd } = req.body; await convexMutation("submissions:grade", { submissionId: req.params.id, score, feedbackMd }, req.authToken); res.json({ success: true }); } catch(e) { next(e); } });
-r.post("/:id/return", requireAuth, async (req, res, next) => { try { await convexMutation("submissions:returnSubmission", { submissionId: req.params.id, feedbackMd: req.body.feedbackMd }, req.authToken); res.json({ success: true }); } catch(e) { next(e); } });
+
+const CreateSubmissionSchema = z.object({
+  assignmentId: z.string().min(1),
+  content: z.string().min(1),
+  attachmentUrls: z.array(z.string().url()).optional().default([]),
+});
+
+r.post("/", requireAuth, asyncHandler(async (req, res) => {
+  const body = CreateSubmissionSchema.parse(req.body);
+  const id = await convexMutation("submissions:create", { ...body, userId: req.userId }, req.authToken);
+  successResponse(res, { _id: id }, 201);
+}));
+
+r.get("/my", requireAuth, asyncHandler(async (req, res) => {
+  const submissions = await convexQuery("submissions:listByUser", { userId: req.userId }, req.authToken);
+  successResponse(res, submissions);
+}));
+
+r.get("/assignment/:assignmentId", requireAuth, asyncHandler(async (req, res) => {
+  const submissions = await convexQuery("submissions:listByAssignment", { assignmentId: req.params.assignmentId }, req.authToken);
+  successResponse(res, submissions);
+}));
+
+r.get("/:id", requireAuth, asyncHandler(async (req, res) => {
+  const submission = await convexQuery("submissions:get", { submissionId: req.params.id }, req.authToken);
+  if (!submission) { apiError(res, 404, "NOT_FOUND", "Submission not found"); return; }
+  successResponse(res, submission);
+}));
+
+r.delete("/:id", requireAuth, asyncHandler(async (req, res) => {
+  await convexMutation("submissions:remove", { submissionId: req.params.id }, req.authToken);
+  successResponse(res, { success: true });
+}));
+
 export default r;
