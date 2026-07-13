@@ -1,21 +1,69 @@
 import { Router } from "express";
-import { convexQuery, convexMutation } from "../convex.js";
+import { z } from "zod";
 import { requireAuth } from "../middleware/auth.js";
+import { asyncHandler, successResponse, apiError } from "../utils/api-handler.js";
+import { convexQuery, convexMutation } from "../convex.js";
+
 const r = Router();
-r.get("/lesson/:lessonId", async (req, res, next) => { try { const q = await convexQuery("quizzes:getByLesson", { lessonId: req.params.lessonId }); if (!q) return res.status(404).json({ error: "Not Found" }); res.json(q); } catch(e) { next(e); } });
-r.get("/lesson/:lessonId/teacher", requireAuth, async (req, res, next) => { try { const q = await convexQuery("quizzes:getByLessonTeacher", { lessonId: req.params.lessonId }, req.authToken); if (!q) return res.status(404).json({ error: "Not Found" }); res.json(q); } catch(e) { next(e); } });
-r.get("/:id", async (req, res, next) => { try { const q = await convexQuery("quizzes:getById", { quizId: req.params.id }); if (!q) return res.status(404).json({ error: "Not Found" }); res.json(q); } catch(e) { next(e); } });
-r.post("/", requireAuth, async (req, res, next) => { try { const { lessonId, title, timeLimitMin, passScore, maxAttempts, shuffleQuestions } = req.body; const id = await convexMutation("quizzes:upsert", { lessonId, title, timeLimitMin, passScore, maxAttempts, shuffleQuestions }, req.authToken); res.json({ _id: id }); } catch(e) { next(e); } });
-r.delete("/:id", requireAuth, async (req, res, next) => { try { await convexMutation("quizzes:remove", { quizId: req.params.id }, req.authToken); res.json({ success: true }); } catch(e) { next(e); } });
-r.post("/:quizId/questions", requireAuth, async (req, res, next) => { try { const { type, textMd, points, options } = req.body; const id = await convexMutation("quizzes:addQuestion", { quizId: req.params.quizId, type, textMd, points, options }, req.authToken); res.status(201).json({ _id: id }); } catch(e) { next(e); } });
-r.patch("/questions/:questionId", requireAuth, async (req, res, next) => { try { const { type, textMd, points, options } = req.body; await convexMutation("quizzes:updateQuestion", { questionId: req.params.questionId, type, textMd, points, options }, req.authToken); res.json({ success: true }); } catch(e) { next(e); } });
-r.delete("/questions/:questionId", requireAuth, async (req, res, next) => { try { await convexMutation("quizzes:removeQuestion", { questionId: req.params.questionId }, req.authToken); res.json({ success: true }); } catch(e) { next(e); } });
-r.post("/:quizId/attempts/start", requireAuth, async (req, res, next) => { try { const id = await convexMutation("quizzes:startAttempt", { quizId: req.params.quizId }, req.authToken); res.json({ _id: id }); } catch(e) { next(e); } });
-r.get("/:quizId/attempts/current", async (req, res, next) => { try { res.json(await convexQuery("quizzes:getCurrentAttempt", { quizId: req.params.quizId }, req.authToken)); } catch(e) { next(e); } });
-r.get("/:quizId/attempts/mine", async (req, res, next) => { try { res.json(await convexQuery("quizzes:getMyAttempts", { quizId: req.params.quizId }, req.authToken)); } catch(e) { next(e); } });
-r.get("/:quizId/attempts", requireAuth, async (req, res, next) => { try { res.json(await convexQuery("quizzes:listAttempts", { quizId: req.params.quizId }, req.authToken)); } catch(e) { next(e); } });
-r.post("/attempts/:attemptId/answer", requireAuth, async (req, res, next) => { try { const { questionId, selectedOptionIds, textAnswer } = req.body; const id = await convexMutation("quizzes:saveAnswer", { attemptId: req.params.attemptId, questionId, selectedOptionIds, textAnswer }, req.authToken); res.json({ _id: id }); } catch(e) { next(e); } });
-r.post("/attempts/:attemptId/submit", requireAuth, async (req, res, next) => { try { const r2 = await convexMutation("quizzes:submitAttempt", { attemptId: req.params.attemptId }, req.authToken); res.json(r2); } catch(e) { next(e); } });
-r.get("/attempts/:attemptId", async (req, res, next) => { try { const a = await convexQuery("quizzes:getAttempt", { attemptId: req.params.attemptId }, req.authToken); if (!a) return res.status(404).json({ error: "Not Found" }); res.json(a); } catch(e) { next(e); } });
-r.post("/answers/:answerId/grade", requireAuth, async (req, res, next) => { try { const { isCorrect, earnedPoints } = req.body; await convexMutation("quizzes:gradeQuestion", { answerId: req.params.answerId, isCorrect, earnedPoints }, req.authToken); res.json({ success: true }); } catch(e) { next(e); } });
+
+const QuestionSchema = z.object({
+  text: z.string().min(1),
+  options: z.array(z.string()).min(2).max(6),
+  correctAnswer: z.number().int().min(0),
+  points: z.number().int().min(1).optional().default(1),
+});
+
+const CreateQuizSchema = z.object({
+  lessonId: z.string().min(1),
+  title: z.string().min(1).max(200),
+  description: z.string().optional().default(""),
+  passingScore: z.number().int().min(0).max(100).optional().default(70),
+  questions: z.array(QuestionSchema).min(1).max(50),
+  timeLimit: z.number().int().min(0).optional(),
+});
+
+const UpdateQuizSchema = CreateQuizSchema.partial();
+const AnswerSchema = z.object({
+  questionIndex: z.number().int().min(0),
+  selectedAnswer: z.number().int().min(0),
+});
+
+const SubmitQuizSchema = z.object({
+  answers: z.array(AnswerSchema).min(1),
+});
+
+r.get("/lesson/:lessonId", asyncHandler(async (req, res) => {
+  const quizzes = await convexQuery("quizzes:listByLesson", { lessonId: req.params.lessonId });
+  successResponse(res, quizzes);
+}));
+
+r.get("/:id", asyncHandler(async (req, res) => {
+  const quiz = await convexQuery("quizzes:get", { quizId: req.params.id });
+  if (!quiz) { apiError(res, 404, "NOT_FOUND", "Quiz not found"); return; }
+  successResponse(res, quiz);
+}));
+
+r.post("/", requireAuth, asyncHandler(async (req, res) => {
+  const body = CreateQuizSchema.parse(req.body);
+  const id = await convexMutation("quizzes:create", body, req.authToken);
+  successResponse(res, { _id: id }, 201);
+}));
+
+r.patch("/:id", requireAuth, asyncHandler(async (req, res) => {
+  const body = UpdateQuizSchema.parse(req.body);
+  await convexMutation("quizzes:update", { quizId: req.params.id, ...body }, req.authToken);
+  successResponse(res, { success: true });
+}));
+
+r.post("/:id/submit", requireAuth, asyncHandler(async (req, res) => {
+  const body = SubmitQuizSchema.parse(req.body);
+  const result = await convexMutation("quizzes:submit", { quizId: req.params.id, ...body }, req.authToken);
+  successResponse(res, result, 201);
+}));
+
+r.delete("/:id", requireAuth, asyncHandler(async (req, res) => {
+  await convexMutation("quizzes:remove", { quizId: req.params.id }, req.authToken);
+  successResponse(res, { success: true });
+}));
+
 export default r;
