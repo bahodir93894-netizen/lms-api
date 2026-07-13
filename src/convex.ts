@@ -1,20 +1,25 @@
 import { ConvexHttpClient } from "convex/browser";
 import { config } from "./config.js";
-let client = null;
-export function getConvexClient() {
-  if (!client) {
-    if (!config.convexUrl) throw new Error("CONVEX_URL is required");
-    client = new ConvexHttpClient(config.convexUrl);
+
+class ConvexClientSingleton {
+  private static _instance: ConvexHttpClient | null = null;
+  static getInstance(): ConvexHttpClient {
+    if (!ConvexClientSingleton._instance) {
+      ConvexClientSingleton._instance = new ConvexHttpClient(config.convexUrl);
+    }
+    return ConvexClientSingleton._instance;
   }
-  return client;
+  static reset(): void { ConvexClientSingleton._instance = null; }
 }
-export async function convexQuery(fn, args = {}, authToken) {
-  const c = getConvexClient();
-  if (authToken) c.setAuth(authToken);
-  try { return await c.query(fn, args); } finally { if (authToken) c.clearAuth(); }
+
+export const getConvexClient = ConvexClientSingleton.getInstance.bind(ConvexClientSingleton);
+
+export function convexQuery(name: string, args: Record<string, unknown> = {}, token?: string) {
+  const client = getConvexClient();
+  return token ? client.query(name, args, { token }) : client.query(name, args);
 }
-export async function convexMutation(fn, args = {}, authToken) {
-  const c = getConvexClient();
-  if (authToken) c.setAuth(authToken);
-  try { return await c.mutation(fn, args); } finally { if (authToken) c.clearAuth(); }
+
+export function convexMutation(name: string, args: Record<string, unknown> = {}, token?: string) {
+  const client = getConvexClient();
+  return token ? client.mutation(name, args, { token }) : client.mutation(name, args);
 }
