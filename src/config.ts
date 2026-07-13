@@ -1,8 +1,18 @@
+function getEnv(key: string, defaultValue?: string): string {
+  const value = process.env[key];
+  if (!value) {
+    if (defaultValue === undefined) throw new Error("Missing required environment variable: " + key);
+    return defaultValue;
+  }
+  return value;
+}
+
 export const config = {
-  port: parseInt(process.env.PORT || "3001", 10),
-  nodeEnv: process.env.NODE_ENV || "development",
-  convexUrl: process.env.CONVEX_URL || "",
-  jwtSecret: process.env.JWT_SECRET || "",
-  corsOrigins: process.env.CORS_ORIGINS?.split(",") || ["http://localhost:5173"],
-  apiPrefix: process.env.API_PREFIX || "/api",
+  port: parseInt(getEnv("PORT", "3001"), 10),
+  nodeEnv: getEnv("NODE_ENV", "development"),
+  isProduction: getEnv("NODE_ENV", "development") === "production",
+  convexUrl: getEnv("CONVEX_URL"),
+  jwtSecret: getEnv("JWT_SECRET"),
+  corsOrigins: getEnv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000").split(","),
+  apiPrefix: getEnv("API_PREFIX", "/api"),
 } as const;
