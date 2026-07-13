@@ -1,0 +1,1 @@
+declare global{namespace Express{interface Request{authToken?:string;authPayload?:Record<string,unknown>;userId?:string}}}export{};
